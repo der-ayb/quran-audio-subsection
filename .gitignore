@@ -25,7 +25,3 @@ dist-ssr
 *.sw?
 
 resources/android/**/*
-android/app/src/main/res
-android/app/release
-android/app/src/androidTest
-android/app/src/test
