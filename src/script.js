@@ -5,15 +5,15 @@ import { registerPlugin } from "@capacitor/core";
 import { Toast } from "@capacitor/toast";
 import { LocalNotifications } from "@capacitor/local-notifications";
 import { App } from "@capacitor/app";
-import * as Tone from "tone";
 import initSqlJs from "sql.js";
 import "./style.css";
 
-
-
 let close = false;
+let Tone = null;
+let lamejs = null;
+
 App.addListener("backButton", (event) => {
-  if(!close){
+  if (!close) {
     showStatus("اضغط مرة أخرى للخروج", "info");
     close = true;
   } else {
@@ -148,6 +148,10 @@ const elements = {
   selectAllBtn: document.getElementById("selectAllBtn"),
   deselectAllBtn: document.getElementById("deselectAllBtn"),
   clearAllBtn: document.getElementById("clearAllBtn"),
+  convertToWavSwitch: document.getElementById("convertToWavSwitch"),
+  deleteAuthersAudiosSwitch: document.getElementById(
+    "deleteAuthersAudiosSwitch",
+  ),
 };
 
 // IndexedDB functions
@@ -404,6 +408,24 @@ function updateUrlParams() {
   window.history.replaceState({}, "", newUrl);
 }
 
+if (elements.convertToWavSwitch) {
+  elements.convertToWavSwitch.addEventListener("change", () => {
+    localStorage.setItem(
+      "selectedConvertToWav",
+      elements.convertToWavSwitch.checked ? "true" : "false",
+    );
+  });
+}
+
+if (elements.deleteAuthersAudiosSwitch) {
+  elements.deleteAuthersAudiosSwitch.addEventListener("change", () => {
+    localStorage.setItem(
+      "deleteAuthersAudios",
+      elements.deleteAuthersAudiosSwitch.checked ? "true" : "false",
+    );
+  });
+}
+
 async function applyUrlParams(params) {
   // Load reader from URL or localStorage
   if (params.r !== null) {
@@ -439,6 +461,16 @@ async function applyUrlParams(params) {
     }
   }
 
+  const savedConvertToWav = localStorage.getItem("selectedConvertToWav");
+  if (savedConvertToWav !== null && elements.convertToWavSwitch) {
+    elements.convertToWavSwitch.checked = savedConvertToWav === "true";
+  }
+
+  const deleteAuthersAudios = localStorage.getItem("deleteAuthersAudios");
+  if (deleteAuthersAudios !== null && elements.deleteAuthersAudiosSwitch) {
+    elements.deleteAuthersAudiosSwitch.checked = deleteAuthersAudios === "true";
+  }
+
   if (params.ss !== null) {
     elements.startSurahSelect.value = params.ss;
     await loadAyasForStartSurah();
@@ -465,8 +497,7 @@ async function initDatabase() {
   try {
     showStatus("جاري تحميل قاعدة البيانات...", "info");
     const SQL = await initSqlJs({
-      locateFile: (file) =>
-        `/${file}`,
+      locateFile: (file) => `/${file}`,
     });
 
     const response = await fetchWithRetry("/quran.sqlite");
@@ -746,7 +777,8 @@ export async function registerCurrentCard() {
 
 // ── Save quran.wav — tries each registered URI, uses first that works ─────
 
-export async function saveQuranWav(blob) {
+export async function saveQuranWav(blob, fileType) {
+  if (elements.deleteAuthersAudiosSwitch.checked) await deleteAllAudioFiles();
   const dirs = await getSaveDirs();
 
   const base64 = await blobToBase64(blob);
@@ -755,9 +787,9 @@ export async function saveQuranWav(blob) {
     try {
       const result = await SafWriter.writeFile({
         folderUri: dir,
-        fileName: "quran.wav",
+        fileName: `quran.${fileType}`,
         data: base64,
-        mimeType: "audio/wav",
+        mimeType: `audio/${fileType}`,
       });
       await saveDirs(dirs.filter((d) => !d.includes("/primary")));
       LocalNotifications.schedule({
@@ -766,8 +798,8 @@ export async function saveQuranWav(blob) {
             title: "✅ تم الحفظ!",
             body: `تم حفظ الملف الصوتي في التخزين ${dir.includes("/primary") ? "الداخلي" : "الخارجي"}`,
             id: new Date().getTime() / 1000000000,
-            autoCancel:true,
-            silent:true,
+            autoCancel: true,
+            silent: true,
           },
         ],
       });
@@ -784,6 +816,47 @@ export async function saveQuranWav(blob) {
 
   // None of the registered cards are currently inserted
   throw new Error("NO_CARD_INSERTED");
+}
+
+// Scan for all audio files under the saved SD card folder
+async function findAllAudioFiles() {
+  const dirs = await getSaveDirs(); // your existing function
+  const allFiles = [];
+
+  for (const dir of dirs.filter((d) => !d.includes("/primary"))) {
+    try {
+      const { files } = await SafWriter.findAudioFiles({ folderUri: dir });
+      allFiles.push(...files.map((f) => ({ ...f, card: dir })));
+    } catch (e) {
+      alert(`Could not scan ${dir}:`, e.message);
+    }
+  }
+
+  return allFiles;
+  // → [{ name: 'quran.wav', uri: 'content://...', size: 1234, card: 'Card 1' }]
+}
+
+// Delete a specific file by its content URI
+async function deleteAudioFile(uri) {
+  return SafWriter.deleteFile({ uri });
+}
+
+// Delete ALL audio files found
+async function deleteAllAudioFiles() {
+  const files = await findAllAudioFiles();
+  const results = [];
+
+  for (const file of files) {
+    try {
+      await deleteAudioFile(file.uri);
+      results.push({ name: file.name, deleted: true });
+      console.log(`🗑 Deleted: ${file.name}`);
+    } catch (e) {
+      results.push({ name: file.name, deleted: false, error: e.message });
+    }
+  }
+
+  return results;
 }
 
 async function downloadAudioSegment(triggerDownload = true) {
@@ -806,6 +879,13 @@ async function downloadAudioSegment(triggerDownload = true) {
     const audioContext = new (
       window.AudioContext || window.webkitAudioContext
     )();
+
+    const shouldConvertToWav = elements.convertToWavSwitch
+      ? elements.convertToWavSwitch.checked
+      : false;
+    const currentSpeed = parseFloat(
+      document.querySelector(".speed-btn.active")?.dataset.speed || "1",
+    );
 
     // Collect all ayahs across surahs
     const ayahsToFetch = [];
@@ -863,42 +943,50 @@ async function downloadAudioSegment(triggerDownload = true) {
     }
 
     showStatus("جاري دمج الآيات...", "info");
-    const currentSpeed = parseFloat(
-      document.querySelector(".speed-btn.active")?.dataset.speed || "1",
-    );
+
     const mergedBuffer = await mergeAudioBuffers(
       audioContext,
       audioBuffers,
       currentSpeed,
     );
-    showStatus("جاري ترميز الصوت...", "info");
-    const wavBlob = bufferToWave(mergedBuffer);
+    let finalBlob;
+    let fileExtension;
 
-    const previewUrl = URL.createObjectURL(wavBlob);
+    if (shouldConvertToWav) {
+      showStatus("جاري ترميز الملف بصيغة WAV...", "info");
+      finalBlob = bufferToWave(mergedBuffer);
+      fileExtension = "wav";
+    } else {
+      showStatus("جاري ترميز الملف بصيغة MP3...", "info");
+      finalBlob = await bufferToMp3(mergedBuffer);
+      fileExtension = "mp3";
+    }
+
+    const previewUrl = URL.createObjectURL(finalBlob);
 
     elements.previewAudio.src = previewUrl;
     elements.previewAudio.classList.remove("d-none");
 
     // Apply current speed to the native element for UI consistency
-    elements.previewAudio.playbackRate = 1; // Speed is already baked into the wavBlob!
+    elements.previewAudio.playbackRate = 1; // Speed is already baked into the finalBlob!
 
     if (triggerDownload) {
       if (Capacitor.isNativePlatform()) {
         try {
-          await saveQuranWav(wavBlob);
+          await saveQuranWav(finalBlob, fileExtension);
         } catch (e) {
           if (
             e.message === "NO_CARD_REGISTERED" ||
             e.message === "NO_CARD_INSERTED"
           ) {
             await registerCurrentCard();
-            await saveQuranWav(wavBlob);
+            await saveQuranWav(finalBlob, fileExtension);
           }
         }
       } else {
         const link = document.createElement("a");
         link.href = previewUrl;
-        link.download = "quran.wav";
+        link.download = `quran.${fileExtension}`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -941,7 +1029,7 @@ async function mergeAudioBuffers(audioContext, buffers, speed = 1) {
   );
 
   let offset = 0;
-  buffers.forEach((buffer,index) => {
+  buffers.forEach((buffer, index) => {
     for (let channel = 0; channel < numberOfChannels; channel++) {
       const sourceData = buffer.getChannelData(channel);
       const targetData = mergedBuffer.getChannelData(channel);
@@ -960,6 +1048,7 @@ async function mergeAudioBuffers(audioContext, buffers, speed = 1) {
 
   // Use Tone.Offline to apply speed to the TOTAL merged buffer
   const renderedDuration = totalLengthSamples / sampleRate / speed;
+  if (!Tone) Tone = await import("tone");
   return await Tone.Offline(
     () => {
       // GrainPlayer allows changing speed without changing pitch
@@ -1025,6 +1114,62 @@ function bufferToWave(audioBuffer) {
   return new Blob([buffer], { type: "audio/wav" });
 }
 
+async function bufferToMp3(audioBuffer) {
+  if (!lamejs) lamejs = await import("@breezystack/lamejs");
+  if (typeof lamejs === "undefined") {
+    throw new Error(
+      "لم يتم تحميل مكتبة ترميز MP3. يرجى التحقق من الاتصال بالإنترنت، أو تفعيل خيار التصدير بصيغة WAV.",
+    );
+  }
+
+  const numberOfChannels = audioBuffer.numberOfChannels;
+  const sampleRate = audioBuffer.sampleRate;
+  const leftChannel = audioBuffer.getChannelData(0);
+  const rightChannel =
+    numberOfChannels > 1 ? audioBuffer.getChannelData(1) : null;
+
+  const mp3encoder = new lamejs.Mp3Encoder(numberOfChannels, sampleRate, 128);
+  const mp3Data = [];
+
+  // Convert float to 16bit PCM
+  const leftInt16 = new Int16Array(leftChannel.length);
+  for (let i = 0; i < leftChannel.length; i++) {
+    let s = Math.max(-1, Math.min(1, leftChannel[i]));
+    leftInt16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+
+  let rightInt16 = null;
+  if (rightChannel) {
+    rightInt16 = new Int16Array(rightChannel.length);
+    for (let i = 0; i < rightChannel.length; i++) {
+      let s = Math.max(-1, Math.min(1, rightChannel[i]));
+      rightInt16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+  }
+
+  const chunkSize = 11520;
+  for (let i = 0; i < leftInt16.length; i += chunkSize) {
+    const leftChunk = leftInt16.subarray(i, i + chunkSize);
+    let mp3buf;
+    if (rightInt16) {
+      const rightChunk = rightInt16.subarray(i, i + chunkSize);
+      mp3buf = mp3encoder.encodeBuffer(leftChunk, rightChunk);
+    } else {
+      mp3buf = mp3encoder.encodeBuffer(leftChunk);
+    }
+    if (mp3buf.length > 0) {
+      mp3Data.push(mp3buf);
+    }
+  }
+
+  const mp3buf = mp3encoder.flush();
+  if (mp3buf.length > 0) {
+    mp3Data.push(mp3buf);
+  }
+
+  return new Blob(mp3Data, { type: "audio/mp3" });
+}
+
 elements.startSurahSelect.addEventListener("change", () => {
   loadAyasForStartSurah();
   updateUrlParams();
@@ -1055,7 +1200,7 @@ if (elements.speedBtns) {
       const speed = parseFloat(btn.dataset.speed);
 
       // If we have a Howl playing, we might need to update its rate
-      // But wait, our wavBlob ALREADY has the speed baked in!
+      // But wait, our finalBlob ALREADY has the speed baked in!
       // So if the user changes the speed AFTER downloading,
       // we should probably re-download/re-merge to bake the new speed in,
       // OR we just update the playback rate of the current audio.
