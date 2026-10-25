@@ -14,6 +14,8 @@ import "./style.css";
 let close = false;
 let Tone = null;
 let lamejs = null;
+let databaseReady = false;
+let pendingAyahNavigation = null;
 
 App.addListener("backButton", (event) => {
   if (!close) {
@@ -41,20 +43,30 @@ function parseQuranLink(url) {
 
 // Called when app is already open and link is clicked
 App.addListener("appUrlOpen", ({ url }) => {
+  if (!url?.startsWith("quran://")) return;
+
   const { surah, ayah } = parseQuranLink(url);
-  navigateToAyah(surah, ayah);
+  void navigateToAyah(surah, ayah);
 });
 
 // Called when app is launched cold via the link
-App.getLaunchUrl().then(({ url }) => {
-  if (url && url.startsWith("quran://")) {
+App.getLaunchUrl()
+  .then((launchUrl) => {
+    const url = launchUrl?.url;
+    if (!url?.startsWith("quran://")) return;
+
     const { surah, ayah } = parseQuranLink(url);
-    navigateToAyah(surah, ayah);
-  }
-});
+    return navigateToAyah(surah, ayah);
+  })
+  .catch((error) => console.error("Failed to get launch URL:", error));
 
 // Your navigation function
 async function navigateToAyah(surah, ayah) {
+  if (!databaseReady) {
+    pendingAyahNavigation = { surah, ayah };
+    return;
+  }
+
   await applyUrlParams({
     ss: surah, // Start Surah
     sa: ayah, // Start Ayah
@@ -512,6 +524,13 @@ async function initDatabase() {
     await applyUrlParams(getUrlParams());
     await updateStoredSurahsList();
 
+    databaseReady = true;
+    if (pendingAyahNavigation) {
+      const { surah, ayah } = pendingAyahNavigation;
+      pendingAyahNavigation = null;
+      await navigateToAyah(surah, ayah);
+    }
+
     showStatus("تم تحميل قاعدة البيانات بنجاح!", "success");
   } catch (error) {
     showStatus(`خطأ في تحميل قاعدة البيانات: ${error.message}`, "danger");
@@ -542,7 +561,7 @@ function loadSurahs() {
       elements.endSurahSelect.appendChild(option.cloneNode(true));
 
       const checkboxDiv = document.createElement("div");
-      checkboxDiv.className = "surah-checkbox form-check px-5";
+      checkboxDiv.className = "surah-checkbox form-check";
       checkboxDiv.innerHTML = `
         <input type="checkbox" class="form-check-input" id="surah_${id_sura}" value="${id_sura}">
         <label class="form-check-label w-75" for="surah_${id_sura}">

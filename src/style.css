@@ -49,6 +49,7 @@ body {
   transition: background 0.2s;
   padding-block: 8px;
   border-radius: 5px;
+  padding-right: 2.5rem!important;
 }
 
 .surah-checkbox:hover {
