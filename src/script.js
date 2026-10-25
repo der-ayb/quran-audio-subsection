@@ -49,16 +49,6 @@ App.addListener("appUrlOpen", ({ url }) => {
   void navigateToAyah(surah, ayah);
 });
 
-// Called when app is launched cold via the link
-App.getLaunchUrl()
-  .then((launchUrl) => {
-    const url = launchUrl?.url;
-    if (!url?.startsWith("quran://")) return;
-
-    const { surah, ayah } = parseQuranLink(url);
-    return navigateToAyah(surah, ayah);
-  })
-  .catch((error) => console.error("Failed to get launch URL:", error));
 
 // Your navigation function
 async function navigateToAyah(surah, ayah) {
