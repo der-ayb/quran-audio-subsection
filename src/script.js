@@ -6,6 +6,9 @@ import { Toast } from "@capacitor/toast";
 import { LocalNotifications } from "@capacitor/local-notifications";
 import { App } from "@capacitor/app";
 import initSqlJs from "sql.js";
+import "bootswatch/dist/flatly/bootstrap.rtl.min.css";
+import "bootstrap-icons/font/bootstrap-icons.min.css";
+import "bootstrap/dist/js/bootstrap.bundle.min.js";
 import "./style.css";
 
 let close = false;

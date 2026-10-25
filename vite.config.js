@@ -13,26 +13,11 @@ export default defineConfig({
       includeAssets: ["favicon.ico", "quran.sqlite", "sql-wasm-browser.wasm"],
       workbox: {
         cleanupOutdatedCaches: true,
-        additionalManifestEntries: [
-          {
-            url: "https://cdnjs.cloudflare.com/ajax/libs/bootswatch/5.3.8/flatly/bootstrap.rtl.min.css",
-            revision: null,
-          },
-          {
-            url: "https://cdnjs.cloudflare.com/ajax/libs/bootstrap-icons/1.13.1/font/bootstrap-icons.min.css",
-            revision: null,
-          },
-          {
-            url: "https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.8/js/bootstrap.bundle.min.js",
-            revision: null,
-          },
-        ],
         runtimeCaching: [
           {
             urlPattern: ({ url }) =>
               url.origin === "https://fonts.googleapis.com" ||
-              url.origin === "https://fonts.gstatic.com" ||
-              url.origin === "https://cdnjs.cloudflare.com",
+              url.origin === "https://fonts.gstatic.com",
             handler: "CacheFirst",
             options: {
               cacheName: "core-cache-first",
